@@ -43,11 +43,33 @@ GLYPH_LOOKUP := [c.DisplayGlyph]int{
 		.N_8=56,
 		.N_9=57,
 		.AT=64,
-		.A=65, .B=66, .C=67, .D=68, .E=69, .F=70, .G=71, .H=72, .I=73, .J=74, .K=75, .L=76, .M=77, .N=78, .O=79, .P=80, .Q=81, .R=82, .S=83, .T=84, .U=85, .V=86, .W=87, .X=88, .Y=89, .Z=90}
+		.A=65, .B=66, .C=67, .D=68, .E=69, .F=70, .G=71, .H=72, .I=73, .J=74, .K=75, .L=76, .M=77, .N=78, .O=79, .P=80, .Q=81, .R=82, .S=83, .T=84, .U=85, .V=86, .W=87, .X=88, .Y=89, .Z=90
+}
+
+black := Color{0,0,0,1}
+white := Color{1,1,1,1}
+pink := Color{245.0/255, 66.0/355, 209.0/255, 1}
+blue := Color{0, 0, 1, 1}
+
 
 /*****************
  * SDL Functions *
  *****************/
+
+color_to_sdl :: proc(c:Color) -> [4]u8 {
+	sdl_col : [4]u8
+	for i in 0..<4 {
+		sdl_col[i] = u8(255*c[i])
+	}
+	return sdl_col
+}
+
+set_tile :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph) {
+	TILES[x][y].fg = fg
+	TILES[x][y].fg = bg
+	TILES[x][y].glyph = glyph
+	TILES[x][y].needs_update = true
+}
 
 sdl_load_spritesheet :: proc() {
 	img_loc := "assets/tiles.png"
@@ -60,6 +82,20 @@ sdl_load_spritesheet :: proc() {
 	pfmt := SDL.PixelFormatEnum.ARGB8888
 	SPRITESHEET = SDL.ConvertSurfaceFormat(image, u32(pfmt), 0)
 	if SPRITESHEET == nil do panic("image convert fail")
+
+	// Convert greyscale image intensity to alpha
+	p_count := SPRITESHEET.w * SPRITESHEET.h
+	pixels : [^]u32
+	pixels = cast([^]u32)SPRITESHEET.pixels
+	for i in 0..<p_count {
+		r,g,b,a : u8
+		SDL.GetRGBA(pixels[i], SPRITESHEET.format, &r,&g,&b,&a)
+		a=r
+		r=255
+		g=255
+		b=255
+		pixels[i] = SDL.MapRGBA(SPRITESHEET.format, r,g,b,a)
+	}
 }
 
 TEMP_FIRST_PASS := true
@@ -92,16 +128,7 @@ sdl_render :: proc() {
 			dest.w = i32(tw)
 			dest.h = i32(th)
 
-			/* red   := u8(255 * (f32(y) / c.ROWS)) */
-			/* if y % 2 == 0 do red = 255-red */
-
-			/* green := u8(255 * (f32(x) / c.COLS)) */
-			/* if x % 2 == 0 do green = 255-green */
-
-			/* SDL.SetRenderDrawColor(renderer, red, green, 0, 255) */
-			/* SDL.RenderFillRect(renderer, &dest) */
-
-			tile := TILES[x][y]
+			tile := &TILES[x][y]
 			if tile.glyph != .NULL {
 				SH :: 232
 				SW :: 128
@@ -114,8 +141,15 @@ sdl_render :: proc() {
 				src.x = SW * i32(idx%TPR)
 				src.y = SH * i32(idx/TPR)
 
+				bg := color_to_sdl(tile.bg)
+				SDL.SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a)
+				SDL.RenderFillRect(renderer, &dest)
+
+				fg := color_to_sdl(tile.fg)
+				SDL.SetTextureColorMod(TEXTURE, fg.r, fg.g, fg.b)
 				SDL.RenderCopy(renderer, TEXTURE, &src, &dest)
 			}
+			tile.needs_update = false
 		}
 	}
 
@@ -205,7 +239,7 @@ main :: proc() {
 			if r == nil do panic("couldn't create renderer")
 		}
 		TEXTURE = SDL.CreateTextureFromSurface(r, SPRITESHEET)
-
+		SDL.SetTextureBlendMode(TEXTURE, .BLEND)
 	}
 
 	/******************
@@ -219,7 +253,14 @@ main :: proc() {
 	 * Game Loop *
 	 *************/
 
+	for i in 0..=10 {
+		TILES[i][0].fg = white
+		TILES[i][1].fg = white
+	}
+
 	TILES[0][0].glyph = .H
+	TILES[0][0].bg = blue
+	TILES[0][0].fg = pink
 	TILES[1][0].glyph = .E
 	TILES[2][0].glyph = .L
 	TILES[3][0].glyph = .L
@@ -241,6 +282,8 @@ main :: proc() {
 	TILES[8][1].glyph = .N_9
 	TILES[9][1].glyph = .N_0
 	TILES[c.COLS/2][c.ROWS/2].glyph = .AT
+	TILES[c.COLS/2][c.ROWS/2].bg = blue
+	TILES[c.COLS/2][c.ROWS/2].fg = white
 
 	for {
 		event : SDL.Event

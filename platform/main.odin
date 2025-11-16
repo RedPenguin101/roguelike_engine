@@ -99,50 +99,7 @@ padding on the sides nor columns/rows of blank pixels between tiles.
 sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
 	assert(r!=nil)
 
-	/*
-	base_tile_width := int(max(1, output_width/COLS))
-	base_tile_height := int(max(1, output_height/ROWS))
-
-	for i in 0..<4 {
-		if TEXTURE[i] != nil do SDL.DestroyTexture(TEXTURE[i])
-	}
-
-	SDL.SetHint(SDL.HINT_RENDER_SCALE_QUALITY, "nearest")
-
-/*
-- 0:   W   x   H
-- 1: (W+1) x   H   pixels
-- 2:   W   x (H+1) pixels
-- 3: (W+1) x (H+1) pixels
-*/
-	for i in 0..<4 {
-		width := base_tile_width
-		if i == 1 || i == 3 do width+=1
-		height := base_tile_height
-		if i == 2 || i == 3 do height+=1
-
-		// We make a surface to turn into the texture. The original
-		// PNG is very big, so we need to downscale it to something
-		// closer to the tiles in the texture. For mysterious SDL
-		// compatibility reasons, we make the surface a multiple of 2
-
-		surface_width := 1
-		surface_height := 1
-		for surface_width  < width*PNG_TILE_COLS  do surface_width *= 2
-		for surface_height < height*PNG_TILE_ROWS do surface_height *= 2
-
-		surface := SDL.CreateRGBSurfaceWithFormat(0, i32(surface_width), i32(surface_height), 32, u32(SDL.PixelFormatEnum.ARGB8888))
-		defer SDL.FreeSurface(surface)
-
-		for x in 0..<PNG_TILE_COLS {
-			for y in 0..<PNG_TILE_COLS {
-
-			}
-		}
-
-	}
-    */
-
+	SDL.SetHint(SDL.HINT_RENDER_SCALE_QUALITY, "best");
 	TEXTURE[0] = SDL.CreateTextureFromSurface(r, PNG)
 	SDL.SetTextureBlendMode(TEXTURE[0], .BLEND)
 }

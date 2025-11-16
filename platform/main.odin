@@ -39,6 +39,8 @@ WIN : ^SDL.Window
 
 // see create_textures proc for why we have 4 textures
 TEXTURE : [4]^SDL.Texture
+TEX_TILE_WIDTH :i32= PNG_TILE_WIDTH
+TEX_TILE_HEIGHT :i32= PNG_TILE_HEIGHT
 
 GLYPH_LOOKUP := [c.DisplayGlyph]int{
 		.NULL=0,
@@ -97,11 +99,24 @@ padding on the sides nor columns/rows of blank pixels between tiles.
 */
 
 sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
+	log.debug("resizing", output_width, output_height)
 	assert(r!=nil)
 
-	SDL.SetHint(SDL.HINT_RENDER_SCALE_QUALITY, "best");
-	TEXTURE[0] = SDL.CreateTextureFromSurface(r, PNG)
+	SDL.SetHint(SDL.HINT_RENDER_SCALE_QUALITY, "linear");
+	tmp_txt := SDL.CreateTextureFromSurface(r, PNG)
+
+	if TEXTURE[0] != nil do SDL.DestroyTexture(TEXTURE[0])
+	pfmt := SDL.PixelFormatEnum.ARGB8888
+	TEXTURE[0] = SDL.CreateTexture(r, pfmt, .TARGET, i32(output_width), i32(output_height))
+	SDL.SetRenderTarget(r, TEXTURE[0])
+	SDL.RenderClear(r)
+	src := SDL.Rect{0,0,PNG_WIDTH,PNG_HEIGHT}
+	dst := SDL.Rect{0,0,i32(output_width), i32(output_height)}
+	SDL.RenderCopy(r, tmp_txt, &src, &dst)
+	SDL.SetRenderTarget(r, nil)
 	SDL.SetTextureBlendMode(TEXTURE[0], .BLEND)
+	TEX_TILE_WIDTH = i32(output_width/16)
+	TEX_TILE_HEIGHT = i32(output_height/24)
 }
 
 sdl_render :: proc() {
@@ -133,16 +148,14 @@ sdl_render :: proc() {
 			dest.h = i32(th)
 
 			tile := &TILES[x][y]
-			SH :: 232
-			SW :: 128
 			TPR :: 16
 
 			idx := GLYPH_LOOKUP[tile.glyph]
 			src : SDL.Rect
-			src.w = SW
-			src.h = SH
-			src.x = SW * i32(idx%TPR)
-			src.y = SH * i32(idx/TPR)
+			src.w = TEX_TILE_WIDTH
+			src.h = TEX_TILE_HEIGHT
+			src.x = TEX_TILE_WIDTH * i32(idx%TPR)
+			src.y = TEX_TILE_HEIGHT * i32(idx/TPR)
 
 			bg := color_to_sdl(tile.bg)
 			SDL.SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a)
@@ -161,6 +174,7 @@ sdl_render :: proc() {
 
 sdl_resize_window :: proc(width, height:i32)
 {
+	r : ^SDL.Renderer
 	if (WIN==nil) {
 		flags := SDL.WindowFlags{ .RESIZABLE, .ALLOW_HIGHDPI, }
 		WIN = SDL.CreateWindow("MY_ROGUELIKE",
@@ -168,7 +182,11 @@ sdl_resize_window :: proc(width, height:i32)
 							   width, height,
 							   flags)
 		assert(WIN!=nil)
+		r = SDL.CreateRenderer(WIN, -1, {})
+	} else {
+		r = SDL.GetRenderer(WIN)
 	}
+	sdl_create_textures(r, int(width), int(height))
 }
 
 SDL_KEYMAP : map[SDL.Scancode]c.KeyboardKey
@@ -227,6 +245,7 @@ sdl_handle_event :: proc(event:SDL.Event) -> bool {
 			#partial switch event.window.event {
 				case .RESIZED: {
 					log.debug("SDL_RESIZE", event.window.data1, event.window.data2)
+					sdl_resize_window(event.window.data1, event.window.data2)
 				}
 				case .EXPOSED: {
 					log.debug("SDL_EXPOSED")

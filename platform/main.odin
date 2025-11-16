@@ -3,15 +3,15 @@ package platform
 import "core:fmt"
 import "core:log"
 import "core:mem"
-import "core:strings"
 
 import SDL "vendor:sdl2"
-import IMG "vendor:sdl2/image"
 
 import c "../common"
 
 Color :: c.Color
 DisplayGlyph :: c.DisplayGlyph
+COLS :: c.COLS
+ROWS :: c.ROWS
 
 PlatformTile :: struct {
 	fg,bg : Color,
@@ -23,12 +23,19 @@ PlatformTile :: struct {
  * GLOBALS *
  ***********/
 
-SPRITESHEET : ^SDL.Surface
+TILES : [COLS][ROWS]PlatformTile
 
-TILES : [c.COLS][c.ROWS]PlatformTile
+set_tile :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph) {
+	TILES[x][y].fg = fg
+	TILES[x][y].fg = bg
+	TILES[x][y].glyph = glyph
+	TILES[x][y].needs_update = true
+}
+
 WIN : ^SDL.Window
 
-TEXTURE : ^SDL.Texture
+// see create_textures proc for why we have 4 textures
+TEXTURE : [4]^SDL.Texture
 
 GLYPH_LOOKUP := [c.DisplayGlyph]int{
 		.NULL=0,
@@ -51,7 +58,6 @@ white := Color{1,1,1,1}
 pink := Color{245.0/255, 66.0/355, 209.0/255, 1}
 blue := Color{0, 0, 1, 1}
 
-
 /*****************
  * SDL Functions *
  *****************/
@@ -64,41 +70,78 @@ color_to_sdl :: proc(c:Color) -> [4]u8 {
 	return sdl_col
 }
 
-set_tile :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph) {
-	TILES[x][y].fg = fg
-	TILES[x][y].fg = bg
-	TILES[x][y].glyph = glyph
-	TILES[x][y].needs_update = true
-}
+/*
 
-sdl_load_spritesheet :: proc() {
-	img_loc := "assets/tiles.png"
-	img_loc_c := strings.clone_to_cstring(img_loc, context.temp_allocator)
+Textures will be sized so the sprites are the same size as the rects
+they will be rendrered to.
 
-	image := IMG.Load(img_loc_c)
-	if image == nil do panic("image load fail")
-	defer SDL.FreeSurface(image)
+We make four copies of the spritesheet texture. They all have the same
+characters on them, but at slightly different sizes:
 
-	pfmt := SDL.PixelFormatEnum.ARGB8888
-	SPRITESHEET = SDL.ConvertSurfaceFormat(image, u32(pfmt), 0)
-	if SPRITESHEET == nil do panic("image convert fail")
+Where W is the native sprite width (128) and H is the native height
+(232)
 
-	// Convert greyscale image intensity to alpha
-	p_count := SPRITESHEET.w * SPRITESHEET.h
-	pixels : [^]u32
-	pixels = cast([^]u32)SPRITESHEET.pixels
-	for i in 0..<p_count {
-		r,g,b,a : u8
-		SDL.GetRGBA(pixels[i], SPRITESHEET.format, &r,&g,&b,&a)
-		a=r
-		r=255
-		g=255
-		b=255
-		pixels[i] = SDL.MapRGBA(SPRITESHEET.format, r,g,b,a)
+- 1st texture: tiles are   W   x   H   pixels
+- 2nd texture: tiles are (W+1) x   H   pixels
+- 3rd texture: tiles are   W   x (H+1) pixels
+- 4th texture: tiles are (W+1) x (H+1) pixels
+
+Since the window width is usually not a multiple of 100 (the `COLS`
+constant), and height not a multiple of 34 (`ROWS`), and tiles must
+have integer dimensions, that means some tiles must be larger by 1
+pixel than others, so that we can span the window without black
+padding on the sides nor columns/rows of blank pixels between tiles.
+
+*/
+
+sdl_create_textures :: proc(r:^SDL.Renderer, width, height: int) {
+	assert(r!=nil)
+
+	base_tile_width := int(max(1, width/COLS))
+	base_tile_height := int(max(1, height/ROWS))
+
+	for i in 0..<4 {
+		if TEXTURE[i] != nil do SDL.DestroyTexture(TEXTURE[i])
 	}
-}
 
-TEMP_FIRST_PASS := true
+	SDL.SetHint(SDL.HINT_RENDER_SCALE_QUALITY, "nearest")
+
+/*
+- 0:   W   x   H
+- 1: (W+1) x   H   pixels
+- 2:   W   x (H+1) pixels
+- 3: (W+1) x (H+1) pixels
+*/
+	for i in 0..<4 {
+		width := base_tile_width
+		if i == 1 || i == 3 do width+=1
+		height := base_tile_height
+		if i == 2 || i == 3 do height+=1
+
+		// We make a surface to turn into the texture. The original
+		// PNG is very big, so we need to downscale it to something
+		// closer to the tiles in the texture. For mysterious SDL
+		// compatibility reasons, we make the surface a multiple of 2
+
+		surface_width := 1
+		surface_height := 1
+		for surface_width  < width*PNG_TILE_COLS  do surface_width *= 2
+		for surface_height < height*PNG_TILE_ROWS do surface_height *= 2
+
+		surface := SDL.CreateRGBSurfaceWithFormat(0, i32(surface_width), i32(surface_height), 32, u32(SDL.PixelFormatEnum.ARGB8888))
+		defer SDL.FreeSurface(surface)
+
+		for x in 0..<PNG_TILE_COLS {
+			for y in 0..<PNG_TILE_COLS {
+				
+			}
+		}
+		
+	}
+
+	TEXTURE[0] = SDL.CreateTextureFromSurface(r, PNG)
+	SDL.SetTextureBlendMode(TEXTURE[0], .BLEND)
+}
 
 sdl_render :: proc() {
 	if WIN == nil  do return
@@ -117,11 +160,11 @@ sdl_render :: proc() {
 	SDL.SetRenderDrawColor(renderer, 0, 0, 0, 255)
 	SDL.RenderClear(renderer)
 
-	tw := f32(width) / c.COLS
-	th := f32(height) / c.ROWS
+	tw := f32(width) / COLS
+	th := f32(height) / ROWS
 
-	for y in 0..<c.ROWS {
-		for x in 0..<c.COLS {
+	for y in 0..<ROWS {
+		for x in 0..<COLS {
 			dest : SDL.Rect
 			dest.x = i32(f32(x)*tw)
 			dest.y = i32(f32(y)*th)
@@ -129,27 +172,28 @@ sdl_render :: proc() {
 			dest.h = i32(th)
 
 			tile := &TILES[x][y]
-			if tile.glyph != .NULL {
-				SH :: 232
-				SW :: 128
-				TPR :: 16
+			SH :: 232
+			SW :: 128
+			TPR :: 16
 
-				idx := GLYPH_LOOKUP[tile.glyph]
-				src : SDL.Rect
-				src.w = SW
-				src.h = SH
-				src.x = SW * i32(idx%TPR)
-				src.y = SH * i32(idx/TPR)
+			idx := GLYPH_LOOKUP[tile.glyph]
+			src : SDL.Rect
+			src.w = SW
+			src.h = SH
+			src.x = SW * i32(idx%TPR)
+			src.y = SH * i32(idx/TPR)
 
+			if tile.bg != black {
 				bg := color_to_sdl(tile.bg)
 				SDL.SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a)
 				SDL.RenderFillRect(renderer, &dest)
-
-				fg := color_to_sdl(tile.fg)
-				SDL.SetTextureColorMod(TEXTURE, fg.r, fg.g, fg.b)
-				SDL.RenderCopy(renderer, TEXTURE, &src, &dest)
 			}
-			tile.needs_update = false
+
+			if tile.glyph != .NULL {
+				fg := color_to_sdl(tile.fg)
+				SDL.SetTextureColorMod(TEXTURE[0], fg.r, fg.g, fg.b)
+				SDL.RenderCopy(renderer, TEXTURE[0], &src, &dest)
+			}
 		}
 	}
 
@@ -190,8 +234,6 @@ sdl_handle_event :: proc(event:SDL.Event) -> bool {
 }
 
 main :: proc() {
-	fmt.println("Hello, world")
-	fmt.println("cols", c.COLS, "rows", c.ROWS)
 	/****************
 	 * DEBUG logger *
 	 ****************/
@@ -238,8 +280,9 @@ main :: proc() {
 			r = SDL.CreateRenderer(WIN, -1, {})
 			if r == nil do panic("couldn't create renderer")
 		}
-		TEXTURE = SDL.CreateTextureFromSurface(r, SPRITESHEET)
-		SDL.SetTextureBlendMode(TEXTURE, .BLEND)
+		width, height : i32
+		SDL.GetRendererOutputSize(r, &width, &height)
+		sdl_create_textures(r, int(width), int(height))
 	}
 
 	/******************
@@ -253,9 +296,11 @@ main :: proc() {
 	 * Game Loop *
 	 *************/
 
-	for i in 0..=10 {
-		TILES[i][0].fg = white
-		TILES[i][1].fg = white
+	for x in 0..<COLS {
+		for y in 0..<ROWS {
+			TILES[x][y].bg = black
+			TILES[x][y].fg = white
+		}
 	}
 
 	TILES[0][0].glyph = .H
@@ -281,9 +326,9 @@ main :: proc() {
 	TILES[7][1].glyph = .N_8
 	TILES[8][1].glyph = .N_9
 	TILES[9][1].glyph = .N_0
-	TILES[c.COLS/2][c.ROWS/2].glyph = .AT
-	TILES[c.COLS/2][c.ROWS/2].bg = blue
-	TILES[c.COLS/2][c.ROWS/2].fg = white
+	TILES[COLS/2][ROWS/2].glyph = .AT
+	TILES[COLS/2][ROWS/2].bg = blue
+	TILES[COLS/2][ROWS/2].fg = white
 
 	for {
 		event : SDL.Event
@@ -298,5 +343,4 @@ main :: proc() {
 	 **********/
 
 	SDL.Quit()
-	fmt.println("Fin")
 }

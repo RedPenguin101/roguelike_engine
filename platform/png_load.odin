@@ -59,10 +59,7 @@ is_empty :: proc(row,column:int) -> bool
 }
 
 sdl_load_spritesheet :: proc() {
-	img_loc := "assets/tiles.png"
-	img_loc_c := strings.clone_to_cstring(img_loc, context.temp_allocator)
-
-	image := image.Load(img_loc_c)
+	image := image.Load("assets/tiles.png")
 	if image == nil do panic("image load fail")
 	defer SDL.FreeSurface(image)
 

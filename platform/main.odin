@@ -94,11 +94,12 @@ padding on the sides nor columns/rows of blank pixels between tiles.
 
 */
 
-sdl_create_textures :: proc(r:^SDL.Renderer, width, height: int) {
+sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
 	assert(r!=nil)
 
-	base_tile_width := int(max(1, width/COLS))
-	base_tile_height := int(max(1, height/ROWS))
+	/*
+	base_tile_width := int(max(1, output_width/COLS))
+	base_tile_height := int(max(1, output_height/ROWS))
 
 	for i in 0..<4 {
 		if TEXTURE[i] != nil do SDL.DestroyTexture(TEXTURE[i])
@@ -138,6 +139,7 @@ sdl_create_textures :: proc(r:^SDL.Renderer, width, height: int) {
 		}
 		
 	}
+    */
 
 	TEXTURE[0] = SDL.CreateTextureFromSurface(r, PNG)
 	SDL.SetTextureBlendMode(TEXTURE[0], .BLEND)
@@ -270,7 +272,6 @@ main :: proc() {
 	SDL.SetHint(SDL.HINT_WINDOWS_DISABLE_THREAD_NAMING, "1")
 	if SDL.Init(SDL.InitFlags{.VIDEO}) < 0 do panic("Could not initialize window")
 
-	// div 2 because of high DPI
 	sdl_resize_window(1177, 736)
 	sdl_load_spritesheet()
 

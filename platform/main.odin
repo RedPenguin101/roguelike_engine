@@ -65,6 +65,10 @@ blue := Color{0, 0, 1, 1}
  * SDL Functions *
  *****************/
 
+sdl_get_seconds_elapsed :: proc(old, current:u64) -> f32 {
+	return f32(current-old) / f32(SDL.GetPerformanceFrequency())
+}
+
 color_to_sdl :: proc(c:Color) -> [4]u8 {
 	sdl_col : [4]u8
 	for i in 0..<4 {
@@ -253,18 +257,16 @@ sdl_handle_event :: proc(event:SDL.Event) -> bool {
 	should_quit := false
 	#partial switch event.type {
 		case .KEYDOWN, .KEYUP: {
+			keycode := SDL.Keycode(event.key.keysym.sym)
+			mods := event.key.keysym.mod
+			if mods & SDL.KMOD_ALT != {} && keycode == .F4 {
+				should_quit = true
+			}
 			scancode := event.key.keysym.scancode
 			if scancode in SDL_KEYMAP
 			{
-				was_down :=  event.key.state == SDL.RELEASED || event.key.repeat != 0
-				is_down := event.key.state == SDL.PRESSED || event.key.repeat != 0
-
 				key := &GAME_INPUT.keyboard[SDL_KEYMAP[scancode]]
-				if !is_down do key.repeat = 0
-				else if was_down do key.repeat += f32(event.key.repeat)
-
-				key.is_down = is_down
-				key.was_down = was_down
+				key.is_down = event.key.state == SDL.PRESSED
 			}
 		}
 		case .QUIT: {
@@ -387,6 +389,11 @@ main :: proc() {
 	 * Game Loop *
 	 *************/
 
+	running := true
+	game_update_hz :f32= 60.0
+	target_seconds_per_frame := 1.0 / game_update_hz
+	last_counter := SDL.GetPerformanceCounter()
+
 	for x in 0..<COLS {
 		for y in 0..<ROWS {
 			TILES[x][y].bg = black
@@ -421,7 +428,7 @@ main :: proc() {
 		TILES[9][1].glyph = .N_0
 	}
 
-	for {
+	for running {
 		if lib_reload_timer > 2*60 && !os.is_file(LIB_LOCK_NAME) {
 			new_lib_write_time, err := os.last_write_time_by_name(LIB_NAME)
 			if err != nil {
@@ -436,12 +443,33 @@ main :: proc() {
 		}
 		lib_reload_timer += 1
 
-		game_api.update(1, game_memory, GAME_INPUT)
 		event : SDL.Event
-		SDL.WaitEvent(&event)
-		should_quit := sdl_handle_event(event)
-		if should_quit do break
+		for SDL.PollEvent(&event) {
+			running = !sdl_handle_event(event)
+		}
+
+		game_api.update(target_seconds_per_frame, game_memory, GAME_INPUT)
+
+		for &btn in GAME_INPUT.keyboard {
+			if btn.is_down && btn.was_down {
+				btn.repeat += target_seconds_per_frame
+			} else if !btn.is_down && btn.was_down {
+				btn.repeat = 0
+			}
+			btn.was_down = btn.is_down
+		}
+
 		sdl_render()
+		if sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter()) < target_seconds_per_frame
+		{
+			time_to_sleep := u32((target_seconds_per_frame - sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter())) * 1000) - 1
+			SDL.Delay(time_to_sleep)
+			for (sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter()) < target_seconds_per_frame)
+			{
+				// Waiting...
+			}
+		}
+		last_counter = SDL.GetPerformanceCounter()
 	}
 
 	/**********

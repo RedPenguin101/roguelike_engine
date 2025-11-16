@@ -64,10 +64,12 @@ game_update :: proc(time_delta:f32, memory:^GameMemory, input:GameInput) -> bool
 
 	plot_tile(state.player_pos.x, state.player_pos.y, black, black, .NULL)
 
-	if input.keyboard[.UP].is_down do state.player_pos.y -= 1
-	if input.keyboard[.DOWN].is_down do state.player_pos.y += 1
-	if input.keyboard[.LEFT].is_down do state.player_pos.x -= 1
-	if input.keyboard[.RIGHT].is_down do state.player_pos.x += 1
+	released :: proc(btn:c.ButtonState) -> bool { return !btn.is_down && btn.was_down }
+
+	if released(input.keyboard[.UP]) do state.player_pos.y -= 1
+	if released(input.keyboard[.DOWN]) do state.player_pos.y += 1
+	if released(input.keyboard[.LEFT]) do state.player_pos.x -= 1
+	if released(input.keyboard[.RIGHT]) do state.player_pos.x += 1
 
 	plot_tile(state.player_pos.x, state.player_pos.y, pink, blue, .AT)
 	return true

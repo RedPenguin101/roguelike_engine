@@ -1,4 +1,4 @@
-Keyboard Input handling (+ basic character movement)
+Better SDL Event handling: render per update
 Mouse Input handling
 proper image downscaling and textures
 Particle effect utilities

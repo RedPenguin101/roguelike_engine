@@ -1,6 +1,5 @@
 package platform
 
-import "core:strings"
 import "vendor:sdl2/image"
 import SDL "vendor:sdl2"
 

@@ -3,6 +3,9 @@ package platform
 import "core:fmt"
 import "core:log"
 import "core:mem"
+import "core:dynlib"
+import "core:os"
+import "core:os/os2"
 
 import SDL "vendor:sdl2"
 
@@ -27,7 +30,7 @@ TILES : [COLS][ROWS]PlatformTile
 
 set_tile :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph) {
 	TILES[x][y].fg = fg
-	TILES[x][y].fg = bg
+	TILES[x][y].bg = bg
 	TILES[x][y].glyph = glyph
 	TILES[x][y].needs_update = true
 }
@@ -134,10 +137,10 @@ sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
 
 		for x in 0..<PNG_TILE_COLS {
 			for y in 0..<PNG_TILE_COLS {
-				
+
 			}
 		}
-		
+
 	}
     */
 
@@ -214,9 +217,56 @@ sdl_resize_window :: proc(width, height:i32)
 	}
 }
 
+SDL_KEYMAP : map[SDL.Scancode]c.KeyboardKey
+GAME_INPUT : c.GameInput
+
+setup_keymap :: proc() {
+	sdl_a := int(SDL.SCANCODE_A)
+	lib_a := int(c.KeyboardKey.A)
+	for i in 0..<26 {
+		sdl_key := SDL.Scancode(sdl_a+i)
+		lib_key := c.KeyboardKey(lib_a+i)
+		SDL_KEYMAP[sdl_key] = lib_key
+	}
+	sdl_1 := int(SDL.SCANCODE_1)
+	lib_1 := int(c.KeyboardKey.N_1)
+	for i in 0..<10 {
+		sdl_key := SDL.Scancode(sdl_1+i)
+		lib_key := c.KeyboardKey(lib_1+i)
+		SDL_KEYMAP[sdl_key] = lib_key
+	}
+
+	SDL_KEYMAP[.UP] = .UP
+	SDL_KEYMAP[.DOWN] = .DOWN
+	SDL_KEYMAP[.LEFT] = .LEFT
+	SDL_KEYMAP[.RIGHT] = .RIGHT
+
+	SDL_KEYMAP[.LCTRL] = .CTRL
+	SDL_KEYMAP[.RCTRL] = .CTRL
+	SDL_KEYMAP[.LSHIFT] = .SHIFT
+	SDL_KEYMAP[.RSHIFT] = .SHIFT
+	SDL_KEYMAP[.LALT] = .META
+	SDL_KEYMAP[.RALT] = .META
+}
+
 sdl_handle_event :: proc(event:SDL.Event) -> bool {
 	should_quit := false
 	#partial switch event.type {
+		case .KEYDOWN, .KEYUP: {
+			scancode := event.key.keysym.scancode
+			if scancode in SDL_KEYMAP
+			{
+				was_down :=  event.key.state == SDL.RELEASED || event.key.repeat != 0
+				is_down := event.key.state == SDL.PRESSED || event.key.repeat != 0
+
+				key := &GAME_INPUT.keyboard[SDL_KEYMAP[scancode]]
+				if !is_down do key.repeat = 0
+				else if was_down do key.repeat += f32(event.key.repeat)
+
+				key.is_down = is_down
+				key.was_down = was_down
+			}
+		}
 		case .QUIT: {
 			log.debug("SDL_QUIT")
 			should_quit = true
@@ -233,6 +283,36 @@ sdl_handle_event :: proc(event:SDL.Event) -> bool {
 		}
 	}
 	return should_quit
+}
+
+/********************
+ * Game API and Lib *
+ ********************/
+
+LIB_NAME :: "game.dll"
+LIB_LOCK_NAME :: "lock.tmp"
+
+load_game_library :: proc(api_version:int) -> c.GameAPI {
+	lib_write_time, lwt_err := os.last_write_time_by_name(LIB_NAME)
+	if lwt_err != nil {
+		panic("Couldn't get last write time of file")
+	}
+
+	copy_err := os2.copy_file(fmt.tprintf("game_{0}.dll", api_version), LIB_NAME)
+	assert(copy_err == nil)
+
+	lib, lib_ok := dynlib.load_library(fmt.tprintf("game_{0}.dll", api_version))
+	if !lib_ok do panic("dynload fail")
+
+	api := c.GameAPI {
+		update = cast(c.GameUpdateFn)(dynlib.symbol_address(lib, "game_update")),
+		init = cast(c.GameInitFn)(dynlib.symbol_address(lib, "game_state_init")),
+		destroy = cast(c.GameDestroyFn)(dynlib.symbol_address(lib, "game_state_destroy")),
+		lib = lib,
+		write_time = lib_write_time,
+	}
+
+	return api
 }
 
 main :: proc() {
@@ -286,12 +366,22 @@ main :: proc() {
 		sdl_create_textures(r, int(width), int(height))
 	}
 
+	setup_keymap()
+	defer delete(SDL_KEYMAP)
+
 	/******************
 	 * Game API Setup *
 	 ******************/
 
-	LIB_NAME :: "game.dll"
-	LIB_LOCK_NAME :: "lock.tmp"
+	api_version := 0
+	game_api := load_game_library(api_version)
+	platform_api := c.PlatformAPI{
+		plot_tile = set_tile
+	}
+	game_memory := game_api.init(platform_api)
+	lib_reload_timer := 0
+	defer game_api.destroy(game_memory)
+	defer dynlib.unload_library(game_api.lib)
 
 	/*************
 	 * Game Loop *
@@ -304,34 +394,49 @@ main :: proc() {
 		}
 	}
 
-	TILES[0][0].glyph = .H
-	TILES[0][0].bg = blue
-	TILES[0][0].fg = pink
-	TILES[1][0].glyph = .E
-	TILES[2][0].glyph = .L
-	TILES[3][0].glyph = .L
-	TILES[4][0].glyph = .O
-	TILES[6][0].glyph = .W
-	TILES[7][0].glyph = .O
-	TILES[8][0].glyph = .R
-	TILES[9][0].glyph = .L
-	TILES[10][0].glyph = .D
+	when true {
+		/* TEMP: check renderer is working */
+		TILES[0][0].glyph = .H
+		TILES[0][0].bg = blue
+		TILES[0][0].fg = pink
+		TILES[1][0].glyph = .E
+		TILES[2][0].glyph = .L
+		TILES[3][0].glyph = .L
+		TILES[4][0].glyph = .O
+		TILES[6][0].glyph = .W
+		TILES[7][0].glyph = .O
+		TILES[8][0].glyph = .R
+		TILES[9][0].glyph = .L
+		TILES[10][0].glyph = .D
 
-	TILES[0][1].glyph = .N_1
-	TILES[1][1].glyph = .N_2
-	TILES[2][1].glyph = .N_3
-	TILES[3][1].glyph = .N_4
-	TILES[4][1].glyph = .N_5
-	TILES[5][1].glyph = .N_6
-	TILES[6][1].glyph = .N_7
-	TILES[7][1].glyph = .N_8
-	TILES[8][1].glyph = .N_9
-	TILES[9][1].glyph = .N_0
-	TILES[COLS/2][ROWS/2].glyph = .AT
-	TILES[COLS/2][ROWS/2].bg = blue
-	TILES[COLS/2][ROWS/2].fg = white
+		TILES[0][1].glyph = .N_1
+		TILES[1][1].glyph = .N_2
+		TILES[2][1].glyph = .N_3
+		TILES[3][1].glyph = .N_4
+		TILES[4][1].glyph = .N_5
+		TILES[5][1].glyph = .N_6
+		TILES[6][1].glyph = .N_7
+		TILES[7][1].glyph = .N_8
+		TILES[8][1].glyph = .N_9
+		TILES[9][1].glyph = .N_0
+	}
 
 	for {
+		if lib_reload_timer > 2*60 && !os.is_file(LIB_LOCK_NAME) {
+			new_lib_write_time, err := os.last_write_time_by_name(LIB_NAME)
+			if err != nil {
+				panic("Couldn't get new write time")
+			}
+			if new_lib_write_time > game_api.write_time {
+				api_version += 1
+				log.debug("Loading API version", api_version)
+				game_api = load_game_library(api_version)
+			}
+			lib_reload_timer = 0
+		}
+		lib_reload_timer += 1
+
+		game_api.update(1, game_memory, GAME_INPUT)
 		event : SDL.Event
 		SDL.WaitEvent(&event)
 		should_quit := sdl_handle_event(event)

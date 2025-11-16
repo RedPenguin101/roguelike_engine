@@ -56,11 +56,6 @@ GLYPH_LOOKUP := [c.DisplayGlyph]int{
 		.A=65, .B=66, .C=67, .D=68, .E=69, .F=70, .G=71, .H=72, .I=73, .J=74, .K=75, .L=76, .M=77, .N=78, .O=79, .P=80, .Q=81, .R=82, .S=83, .T=84, .U=85, .V=86, .W=87, .X=88, .Y=89, .Z=90
 }
 
-black := Color{0,0,0,1}
-white := Color{1,1,1,1}
-pink := Color{245.0/255, 66.0/355, 209.0/255, 1}
-blue := Color{0, 0, 1, 1}
-
 /*****************
  * SDL Functions *
  *****************/
@@ -192,11 +187,9 @@ sdl_render :: proc() {
 			src.x = SW * i32(idx%TPR)
 			src.y = SH * i32(idx/TPR)
 
-			if tile.bg != black {
-				bg := color_to_sdl(tile.bg)
-				SDL.SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a)
-				SDL.RenderFillRect(renderer, &dest)
-			}
+			bg := color_to_sdl(tile.bg)
+			SDL.SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a)
+			SDL.RenderFillRect(renderer, &dest)
 
 			if tile.glyph != .NULL {
 				fg := color_to_sdl(tile.fg)
@@ -396,36 +389,9 @@ main :: proc() {
 
 	for x in 0..<COLS {
 		for y in 0..<ROWS {
-			TILES[x][y].bg = black
-			TILES[x][y].fg = white
+			TILES[x][y].bg = {0,0,0,1}
+			TILES[x][y].fg = {1,1,1,1}
 		}
-	}
-
-	when true {
-		/* TEMP: check renderer is working */
-		TILES[0][0].glyph = .H
-		TILES[0][0].bg = blue
-		TILES[0][0].fg = pink
-		TILES[1][0].glyph = .E
-		TILES[2][0].glyph = .L
-		TILES[3][0].glyph = .L
-		TILES[4][0].glyph = .O
-		TILES[6][0].glyph = .W
-		TILES[7][0].glyph = .O
-		TILES[8][0].glyph = .R
-		TILES[9][0].glyph = .L
-		TILES[10][0].glyph = .D
-
-		TILES[0][1].glyph = .N_1
-		TILES[1][1].glyph = .N_2
-		TILES[2][1].glyph = .N_3
-		TILES[3][1].glyph = .N_4
-		TILES[4][1].glyph = .N_5
-		TILES[5][1].glyph = .N_6
-		TILES[6][1].glyph = .N_7
-		TILES[7][1].glyph = .N_8
-		TILES[8][1].glyph = .N_9
-		TILES[9][1].glyph = .N_0
 	}
 
 	for running {

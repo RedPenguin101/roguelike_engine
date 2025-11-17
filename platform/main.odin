@@ -39,8 +39,7 @@ WIN : ^SDL.Window
 
 // see create_textures proc for why we have 4 textures
 TEXTURE : [4]^SDL.Texture
-TEX_TILE_WIDTH :i32= PNG_TILE_WIDTH
-TEX_TILE_HEIGHT :i32= PNG_TILE_HEIGHT
+TEX_SIZES : [4][2]i32
 
 glyph_lookup :: proc(g:c.DisplayGlyph) -> int {
 	return int(g)
@@ -67,30 +66,46 @@ sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
 	if PNG == nil {
 		return
 	}
-	target_height := output_height/ROWS
-	target_width  := output_width/COLS
 	pfmt := SDL.PixelFormatEnum.ARGB8888
-	downscaled := SDL.CreateRGBSurfaceWithFormat(0, i32(target_width*16), i32(target_height*24), 32, u32(pfmt))
 
-	for row in 0..<24 {
-		for col in 0..<16 {
-			downscale_tile(PNG, PNG_TILE_WIDTH, PNG_TILE_HEIGHT,
-						   downscaled, target_width, target_height,
-						   row, col)
+    // The original image will be resized to 4 possible sizes:
+    //  -  Textures[0]: tiles are   W   x   H   pixels
+    //  -  Textures[1]: tiles are (W+1) x   H   pixels
+    //  -  Textures[2]: tiles are   W   x (H+1) pixels
+    //  -  Textures[3]: tiles are (W+1) x (H+1) pixels
+
+	for i in 0..<4 {
+		target_height := output_height/ROWS
+		target_width  := output_width/COLS
+		if i == 1 || i == 3 do target_width+=1
+		if i == 2 || i == 3 do target_height+=1
+
+		fmt.println("step", i, "size", target_width, "x", target_height)
+
+		downscaled := SDL.CreateRGBSurfaceWithFormat(0, i32(target_width*16), i32(target_height*24), 32, u32(pfmt))
+
+		for row in 0..<24 {
+			for col in 0..<16 {
+				downscale_tile(PNG, PNG_TILE_WIDTH, PNG_TILE_HEIGHT,
+							   downscaled, target_width, target_height,
+							   row, col)
+			}
 		}
-	}
 
-	if TEXTURE[0] != nil do SDL.DestroyTexture(TEXTURE[0])
-	TEXTURE = SDL.CreateTextureFromSurface(r, downscaled)
-	SDL.SetTextureBlendMode(TEXTURE[0], .BLEND)
-	TEX_TILE_HEIGHT = i32(target_height)
-	TEX_TILE_WIDTH  = i32(target_width)
-	SDL.FreeSurface(downscaled)
+		if TEXTURE[i] != nil do SDL.DestroyTexture(TEXTURE[i])
+		TEXTURE[i] = SDL.CreateTextureFromSurface(r, downscaled)
+		SDL.SetTextureBlendMode(TEXTURE[i], .BLEND)
+		TEX_SIZES[i] = {i32(target_width), i32(target_height)}
+		SDL.FreeSurface(downscaled)
+	}
 }
 
 sdl_render :: proc() {
 	if WIN == nil  do return
-	if TEXTURE[0] == nil do return
+	if TEXTURE[0] == nil do panic("tex 0 is nil")
+	if TEXTURE[1] == nil do panic("tex 1 is nil")
+	if TEXTURE[2] == nil do panic("tex 2 is nil")
+	if TEXTURE[3] == nil do panic("tex 3 is nil")
 
 	renderer := SDL.GetRenderer(WIN)
 
@@ -98,42 +113,60 @@ sdl_render :: proc() {
 		panic("no renderer")
 	}
 
-	width, height : i32
-	if SDL.GetRendererOutputSize(renderer, &width, &height) < 0 do panic("couldn't get renderer size")
-	if width == 0 || height == 0 do return
+	output_width, output_height : i32
+	if SDL.GetRendererOutputSize(renderer, &output_width, &output_height) < 0 do panic("couldn't get renderer size")
+	if output_width == 0 || output_height == 0 do return
 
 	SDL.SetRenderDrawColor(renderer, 0, 0, 0, 255)
 	SDL.RenderClear(renderer)
 
-	tw := f32(width) / COLS
-	th := f32(height) / ROWS
+	for x in 0..<COLS {
+		col_width := (i32(x+1) * output_width / COLS) - (i32(x) * output_width / COLS);
+		for y in 0..<ROWS {
+			row_height := (i32(y+1) * output_height / ROWS) - (i32(y) * output_height / ROWS);
 
-	for y in 0..<ROWS {
+			found := false
+			for i in 0..<4 {
+				if TEX_SIZES[i] == {col_width, row_height} do found = true
+			}
+			if !found {
+				fmt.println("Couldn't find texture for size", col_width, row_height)
+				fmt.println("Sizes are ", TEX_SIZES)
+				panic("")
+			}
+		}
+	}
+
+	for step in -1..<4 {
 		for x in 0..<COLS {
-			dest : SDL.Rect
-			dest.x = i32(f32(x)*tw)
-			dest.y = i32(f32(y)*th)
-			dest.w = i32(tw)
-			dest.h = i32(th)
+			col_width := (i32(x+1) * output_width / COLS) - (i32(x) * output_width / COLS);
+			for y in 0..<ROWS {
+				row_height := (i32(y+1) * output_height / ROWS) - (i32(y) * output_height / ROWS);
 
-			tile := &TILES[x][y]
-			TPR :: 16
+				dest : SDL.Rect
+				dest.x = i32(x)*output_width / COLS
+				dest.y = i32(y)*output_height / ROWS
+				dest.w = col_width
+				dest.h = row_height
 
-			bg := color_to_sdl(tile.bg)
-			SDL.SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a)
-			SDL.RenderFillRect(renderer, &dest)
+				tile := &TILES[x][y]
 
-			if tile.glyph > .BLANK {
-				idx := glyph_lookup(tile.glyph)
-				src : SDL.Rect
-				src.w = TEX_TILE_WIDTH
-				src.h = TEX_TILE_HEIGHT
-				src.x = TEX_TILE_WIDTH  * i32(idx%TPR)
-				src.y = TEX_TILE_HEIGHT * i32(idx/TPR)
+				if step == -1 {
+					bg := color_to_sdl(tile.bg)
+					SDL.SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a)
+					SDL.RenderFillRect(renderer, &dest)
+				} else if tile.glyph > .BLANK && TEX_SIZES[step] == {col_width, row_height}{
+					idx := i32(glyph_lookup(tile.glyph))
+					src : SDL.Rect
+					src.w = col_width
+					src.h = row_height
+					src.x = col_width  * (idx % 16)
+					src.y = row_height * (idx / 16)
 
-				fg := color_to_sdl(tile.fg)
-				SDL.SetTextureColorMod(TEXTURE[0], fg.r, fg.g, fg.b)
-				SDL.RenderCopy(renderer, TEXTURE[0], &src, &dest)
+					fg := color_to_sdl(tile.fg)
+					SDL.SetTextureColorMod(TEXTURE[step], fg.r, fg.g, fg.b)
+					SDL.RenderCopy(renderer, TEXTURE[step], &src, &dest)
+				}
 			}
 		}
 	}

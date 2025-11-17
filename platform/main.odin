@@ -62,6 +62,9 @@ color_to_sdl :: proc(c:Color) -> [4]u8 {
 }
 
 sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
+	when ODIN_DEBUG {
+		start_time := SDL.GetPerformanceCounter()
+	}
 	assert(r!=nil)
 	if PNG == nil {
 		return
@@ -79,9 +82,6 @@ sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
 		target_width  := output_width/COLS
 		if i == 1 || i == 3 do target_width+=1
 		if i == 2 || i == 3 do target_height+=1
-
-		fmt.println("step", i, "size", target_width, "x", target_height)
-
 		downscaled := SDL.CreateRGBSurfaceWithFormat(0, i32(target_width*16), i32(target_height*24), 32, u32(pfmt))
 
 		for row in 0..<24 {
@@ -97,6 +97,11 @@ sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
 		SDL.SetTextureBlendMode(TEXTURE[i], .BLEND)
 		TEX_SIZES[i] = {i32(target_width), i32(target_height)}
 		SDL.FreeSurface(downscaled)
+	}
+
+	when ODIN_DEBUG {
+		duration := sdl_get_seconds_elapsed(start_time, SDL.GetPerformanceCounter())
+		log.debugf("texture create took %.3f ms", duration*1000)
 	}
 }
 
@@ -120,19 +125,21 @@ sdl_render :: proc() {
 	SDL.SetRenderDrawColor(renderer, 0, 0, 0, 255)
 	SDL.RenderClear(renderer)
 
-	for x in 0..<COLS {
-		col_width := (i32(x+1) * output_width / COLS) - (i32(x) * output_width / COLS);
-		for y in 0..<ROWS {
-			row_height := (i32(y+1) * output_height / ROWS) - (i32(y) * output_height / ROWS);
+	when ODIN_DEBUG {
+		for x in 0..<COLS {
+			col_width := (i32(x+1) * output_width / COLS) - (i32(x) * output_width / COLS);
+			for y in 0..<ROWS {
+				row_height := (i32(y+1) * output_height / ROWS) - (i32(y) * output_height / ROWS);
 
-			found := false
-			for i in 0..<4 {
-				if TEX_SIZES[i] == {col_width, row_height} do found = true
-			}
-			if !found {
-				fmt.println("Couldn't find texture for size", col_width, row_height)
-				fmt.println("Sizes are ", TEX_SIZES)
-				panic("")
+				found := false
+				for i in 0..<4 {
+					if TEX_SIZES[i] == {col_width, row_height} do found = true
+				}
+				if !found {
+					fmt.println("Couldn't find texture for size", col_width, row_height)
+					fmt.println("Sizes are ", TEX_SIZES)
+					panic("")
+				}
 			}
 		}
 	}
@@ -397,7 +404,20 @@ main :: proc() {
 			btn.was_down = btn.is_down
 		}
 
+		pre_render := SDL.GetPerformanceCounter()
 		sdl_render()
+		when ODIN_DEBUG {
+			post_render := SDL.GetPerformanceCounter()
+			prerender_spf := sdl_get_seconds_elapsed(last_counter, pre_render)
+			actual_spf := sdl_get_seconds_elapsed(last_counter, post_render)
+			log.debugf("target s/f: %.2fms\t prerender: %.2f\t postrender : %.2f\t headroom : %.2f",
+					   target_seconds_per_frame*1000,
+					   prerender_spf*1000,
+					   actual_spf*1000,
+					   (target_seconds_per_frame-actual_spf)*1000,
+					   )
+		}
+
 		if sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter()) < target_seconds_per_frame
 		{
 			time_to_sleep := u32((target_seconds_per_frame - sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter())) * 1000) - 1

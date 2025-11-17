@@ -93,9 +93,11 @@ downscale_tile :: proc(source:^SDL.Surface, source_tile_width, source_tile_heigh
 	sum_of_squares := make([]u64, dest_tile_width*dest_tile_height, context.temp_allocator)
 
 	for acc_row, src_row in row_mapping {
+		src_row_idx := (tile_col*source_tile_width)+(tile_row*source_tile_height+src_row)*PNG_WIDTH
+		acc_row_idx := (acc_row*dest_tile_width)
 		for acc_col, src_col in col_mapping {
-			src_idx := (tile_col*source_tile_width)+(tile_row*source_tile_height+src_row)*PNG_WIDTH + src_col
-			acc_idx := (acc_row*dest_tile_width)+acc_col
+			src_idx := src_row_idx + src_col
+			acc_idx := acc_row_idx + acc_col
 
 			intensity := u64(source_pixels[src_idx] & 0xff)
 			counter[acc_idx]        += 1
@@ -105,8 +107,9 @@ downscale_tile :: proc(source:^SDL.Surface, source_tile_width, source_tile_heigh
 
 	dest_width := int(dest.w)
 	for row in 0..<dest_tile_height {
+		dst_row_idx := (tile_col*dest_tile_width) + (tile_row*dest_tile_height+row)*dest_width
 		for col in 0..<dest_tile_width {
-			dst_idx := (tile_col*dest_tile_width) + (tile_row*dest_tile_height+row)*dest_width + col
+			dst_idx := dst_row_idx + col
 			acc_idx := row*dest_tile_width + col
 
 			count := counter[acc_idx]

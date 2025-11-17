@@ -38,7 +38,7 @@ set_tile :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph) {
 WIN : ^SDL.Window
 
 // see create_textures proc for why we have 4 textures
-TEXTURE : ^SDL.Texture
+TEXTURE : [4]^SDL.Texture
 TEX_TILE_WIDTH :i32= PNG_TILE_WIDTH
 TEX_TILE_HEIGHT :i32= PNG_TILE_HEIGHT
 
@@ -80,9 +80,9 @@ sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
 		}
 	}
 
-	if TEXTURE != nil do SDL.DestroyTexture(TEXTURE)
+	if TEXTURE[0] != nil do SDL.DestroyTexture(TEXTURE[0])
 	TEXTURE = SDL.CreateTextureFromSurface(r, downscaled)
-	SDL.SetTextureBlendMode(TEXTURE, .BLEND)
+	SDL.SetTextureBlendMode(TEXTURE[0], .BLEND)
 	TEX_TILE_HEIGHT = i32(target_height)
 	TEX_TILE_WIDTH  = i32(target_width)
 	SDL.FreeSurface(downscaled)
@@ -90,13 +90,12 @@ sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
 
 sdl_render :: proc() {
 	if WIN == nil  do return
-	if TEXTURE == nil do return
+	if TEXTURE[0] == nil do return
 
 	renderer := SDL.GetRenderer(WIN)
 
 	if renderer == nil {
-		renderer = SDL.CreateRenderer(WIN, -1, {})
-		if renderer == nil do panic("couldn't create renderer")
+		panic("no renderer")
 	}
 
 	width, height : i32
@@ -133,8 +132,8 @@ sdl_render :: proc() {
 				src.y = TEX_TILE_HEIGHT * i32(idx/TPR)
 
 				fg := color_to_sdl(tile.fg)
-				SDL.SetTextureColorMod(TEXTURE, fg.r, fg.g, fg.b)
-				SDL.RenderCopy(renderer, TEXTURE, &src, &dest)
+				SDL.SetTextureColorMod(TEXTURE[0], fg.r, fg.g, fg.b)
+				SDL.RenderCopy(renderer, TEXTURE[0], &src, &dest)
 			}
 		}
 	}
@@ -142,20 +141,12 @@ sdl_render :: proc() {
 	SDL.RenderPresent(renderer)
 }
 
-sdl_resize_window :: proc(width, height:i32)
+sdl_resize_window :: proc()
 {
-	r : ^SDL.Renderer
-	if (WIN==nil) {
-		flags := SDL.WindowFlags{ .RESIZABLE, .ALLOW_HIGHDPI, }
-		WIN = SDL.CreateWindow("MY_ROGUELIKE",
-							   SDL.WINDOWPOS_CENTERED, SDL.WINDOWPOS_CENTERED,
-							   width, height,
-							   flags)
-		assert(WIN!=nil)
-		r = SDL.CreateRenderer(WIN, -1, {})
-	} else {
-		r = SDL.GetRenderer(WIN)
-	}
+	r := SDL.GetRenderer(WIN)
+	if r == nil do panic("No renderer on resize")
+	width, height : i32
+	SDL.GetRendererOutputSize(r, &width, &height)
 	sdl_create_textures(r, int(width), int(height))
 }
 
@@ -215,7 +206,7 @@ sdl_handle_event :: proc(event:SDL.Event) -> bool {
 			#partial switch event.window.event {
 				case .RESIZED: {
 					log.debug("SDL_RESIZE", event.window.data1, event.window.data2)
-					sdl_resize_window(event.window.data1, event.window.data2)
+					sdl_resize_window()
 				}
 				case .EXPOSED: {
 					log.debug("SDL_EXPOSED")
@@ -292,20 +283,22 @@ main :: proc() {
 
 	SDL.SetHint(SDL.HINT_WINDOWS_DISABLE_THREAD_NAMING, "1")
 	if SDL.Init(SDL.InitFlags{.VIDEO}) < 0 do panic("Could not initialize window")
-
 	sdl_load_spritesheet()
-	sdl_resize_window(1177, 736)
 
-	{
-		r := SDL.GetRenderer(WIN)
-		if r == nil {
-			r = SDL.CreateRenderer(WIN, -1, {})
-			if r == nil do panic("couldn't create renderer")
-		}
-		width, height : i32
-		SDL.GetRendererOutputSize(r, &width, &height)
-		sdl_create_textures(r, int(width), int(height))
-	}
+	init_width:i32 = 1177
+	init_height:i32 = 736
+	flags := SDL.WindowFlags{ .RESIZABLE, .ALLOW_HIGHDPI, }
+	WIN = SDL.CreateWindow("MY_ROGUELIKE",
+						   SDL.WINDOWPOS_CENTERED, SDL.WINDOWPOS_CENTERED,
+						   init_width, init_height,
+						   flags)
+	if WIN == nil do panic("window create fail")
+	r := SDL.CreateRenderer(WIN, -1, {})
+	if r == nil do panic("render create fail")
+
+	width, height : i32
+	SDL.GetRendererOutputSize(r, &width, &height)
+	sdl_create_textures(r, int(width), int(height))
 
 	setup_keymap()
 	defer delete(SDL_KEYMAP)

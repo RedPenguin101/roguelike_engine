@@ -1,4 +1,3 @@
 Mouse Input handling
-proper image downscaling and textures
 Particle effect utilities
 Menu and Button utilities

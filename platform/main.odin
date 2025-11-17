@@ -2,14 +2,14 @@ package platform
 
 import "core:fmt"
 import "core:log"
-
-import "core:mem"
-import "core:dynlib"
+import "core:math"
 import "core:os"
 import "core:os/os2"
 
+import "core:mem"
+import "core:dynlib"
+
 import "vendor:sdl2/image"
-import "core:math"
 import SDL "vendor:sdl2"
 
 import "../common"
@@ -26,6 +26,9 @@ PlatformAPI  :: common.PlatformAPI
 /****************************
  * GLOBALS AND PLATFORM API *
  ****************************/
+
+INIT_WIN_WIDTH  :: 1177
+INIT_WIN_HEIGHT :: 736
 
 LIB_NAME :: "game.dll"
 LIB_LOCK_NAME :: "lock.tmp"
@@ -387,12 +390,10 @@ main :: proc() {
 	if SDL.Init(SDL.InitFlags{.VIDEO}) < 0 do panic("Could not initialize window")
 	sdl_load_spritesheet()
 
-	init_width:i32  = 1177
-	init_height:i32 = 736
 	flags := SDL.WindowFlags{ .RESIZABLE, .ALLOW_HIGHDPI, }
 	WIN = SDL.CreateWindow("MY_ROGUELIKE",
 						   SDL.WINDOWPOS_CENTERED, SDL.WINDOWPOS_CENTERED,
-						   init_width, init_height,
+						   INIT_WIN_WIDTH, INIT_WIN_HEIGHT,
 						   flags)
 	if WIN == nil do panic("window create fail")
 	r := SDL.CreateRenderer(WIN, -1, {})

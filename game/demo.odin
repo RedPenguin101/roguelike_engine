@@ -1,5 +1,17 @@
 package game
 
+white          := Color{1,1,1,1}
+pink           := Color{245.0/255, 66.0/355, 209.0/255, 1}
+pale_red       := Color{239.0/255, 134.0/255, 118.0/255, 1}
+blue           := Color{36.0/255, 26.0/255, 122.0/255, 1}
+dark_blue      := Color{26.0/255, 18.0/255, 90.0/255, 1}
+purple         := Color{141.0/255, 58.0/255, 173.0/255, 1}
+lavender       := Color{123.0/255, 103.0/255, 222.0/255, 1}
+dark_lavender  := Color{50.0/255, 46.0/255, 98.0/255, 1}
+light_lavender := Color{201.0/255, 185.0/255, 250.0/255, 1}
+light_grey     := Color{192.0/255, 182.0/255, 179.0/255, 1}
+mid_grey       := Color{111.0/255, 111.0/255, 111.0/255, 1}
+
 setup_dummy_screen :: proc(memory:^GameMemory) {
 	plot_tile := memory.platform.plot_tile
 

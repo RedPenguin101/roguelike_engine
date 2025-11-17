@@ -2,19 +2,33 @@ package platform
 
 import "core:fmt"
 import "core:log"
+
 import "core:mem"
 import "core:dynlib"
 import "core:os"
 import "core:os/os2"
 
+import "vendor:sdl2/image"
+import "core:math"
 import SDL "vendor:sdl2"
 
-import c "../common"
+import "../common"
 
-Color :: c.Color
-DisplayGlyph :: c.DisplayGlyph
-COLS :: c.COLS
-ROWS :: c.ROWS
+Color        :: common.Color
+DisplayGlyph :: common.DisplayGlyph
+COLS         :: common.COLS
+ROWS         :: common.ROWS
+KeyboardKey  :: common.KeyboardKey
+GameInput    :: common.GameInput
+GameAPI      :: common.GameAPI
+PlatformAPI  :: common.PlatformAPI
+
+/****************************
+ * GLOBALS AND PLATFORM API *
+ ****************************/
+
+LIB_NAME :: "game.dll"
+LIB_LOCK_NAME :: "lock.tmp"
 
 PlatformTile :: struct {
 	fg,bg : Color,
@@ -22,11 +36,26 @@ PlatformTile :: struct {
 	needs_update : bool,
 }
 
-/***********
- * GLOBALS *
- ***********/
-
 TILES : [COLS][ROWS]PlatformTile
+
+WIN : ^SDL.Window
+
+PNG : ^SDL.Surface
+PNG_WIDTH       :: 2048
+PNG_HEIGHT      :: 5568
+PNG_TILE_HEIGHT :: 232
+PNG_TILE_WIDTH  :: 128
+PNG_TILE_COLS   :: 16
+PNG_TILE_ROWS   :: 24
+
+// see create_textures proc for why we have 4 textures
+TEXTURE : [4]^SDL.Texture
+TEX_SIZES : [4][2]i32
+
+SDL_KEYMAP : map[SDL.Scancode]KeyboardKey
+GAME_INPUT : GameInput
+
+glyph_lookup :: proc(g:DisplayGlyph) -> int { return int(g) }
 
 set_tile :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph) {
 	TILES[x][y].fg = fg
@@ -35,14 +64,33 @@ set_tile :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph) {
 	TILES[x][y].needs_update = true
 }
 
-WIN : ^SDL.Window
+setup_keymap :: proc() {
+	sdl_a := int(SDL.SCANCODE_A)
+	lib_a := int(KeyboardKey.A)
+	for i in 0..<26 {
+		sdl_key := SDL.Scancode(sdl_a+i)
+		lib_key := KeyboardKey(lib_a+i)
+		SDL_KEYMAP[sdl_key] = lib_key
+	}
+	sdl_1 := int(SDL.SCANCODE_1)
+	lib_1 := int(KeyboardKey.N_1)
+	for i in 0..<10 {
+		sdl_key := SDL.Scancode(sdl_1+i)
+		lib_key := KeyboardKey(lib_1+i)
+		SDL_KEYMAP[sdl_key] = lib_key
+	}
 
-// see create_textures proc for why we have 4 textures
-TEXTURE : [4]^SDL.Texture
-TEX_SIZES : [4][2]i32
+	SDL_KEYMAP[.UP] = .UP
+	SDL_KEYMAP[.DOWN] = .DOWN
+	SDL_KEYMAP[.LEFT] = .LEFT
+	SDL_KEYMAP[.RIGHT] = .RIGHT
 
-glyph_lookup :: proc(g:c.DisplayGlyph) -> int {
-	return int(g)
+	SDL_KEYMAP[.LCTRL] = .CTRL
+	SDL_KEYMAP[.RCTRL] = .CTRL
+	SDL_KEYMAP[.LSHIFT] = .SHIFT
+	SDL_KEYMAP[.RSHIFT] = .SHIFT
+	SDL_KEYMAP[.LALT] = .META
+	SDL_KEYMAP[.RALT] = .META
 }
 
 /*****************
@@ -55,10 +103,61 @@ sdl_get_seconds_elapsed :: proc(old, current:u64) -> f32 {
 
 color_to_sdl :: proc(c:Color) -> [4]u8 {
 	sdl_col : [4]u8
-	for i in 0..<4 {
-		sdl_col[i] = u8(255*c[i])
-	}
+	for i in 0..<4 do sdl_col[i] = u8(255*c[i])
 	return sdl_col
+}
+
+sdl_load_spritesheet :: proc() {
+	image := image.Load("assets/tiles.png")
+	if image == nil do panic("image load fail")
+	PNG = SDL.ConvertSurfaceFormat(image, u32(SDL.PixelFormatEnum.ARGB8888), 0)
+	if PNG == nil do panic("image convert fail")
+}
+
+downscale_tile :: proc(source:^SDL.Surface, source_tile_width, source_tile_height: int,
+					   dest:^SDL.Surface, dest_tile_width, dest_tile_height: int,
+					   tile_row, tile_col: int)
+{
+	source_pixels := cast([^]u32)source.pixels
+	dest_pixels   := cast([^]u32)dest.pixels
+
+	col_mapping := make([]int, source_tile_width, context.temp_allocator)
+	row_mapping := make([]int, source_tile_height, context.temp_allocator)
+
+	for col in 0..<source_tile_width  do col_mapping[col] = (col*dest_tile_width)/source_tile_width
+	for row in 0..<source_tile_height do row_mapping[row] = (row*dest_tile_height)/source_tile_height
+
+	counter        := make([]u64, dest_tile_width*dest_tile_height, context.temp_allocator)
+	sum_of_squares := make([]u64, dest_tile_width*dest_tile_height, context.temp_allocator)
+
+	for acc_row, src_row in row_mapping {
+		src_row_idx := (tile_col*source_tile_width)+(tile_row*source_tile_height+src_row)*PNG_WIDTH
+		acc_row_idx := (acc_row*dest_tile_width)
+		for acc_col, src_col in col_mapping {
+			src_idx := src_row_idx + src_col
+			acc_idx := acc_row_idx + acc_col
+
+			intensity := u64(source_pixels[src_idx] & 0xff)
+			counter[acc_idx]        += 1
+			sum_of_squares[acc_idx] += intensity*intensity
+		}
+	}
+
+	dest_width := int(dest.w)
+	for row in 0..<dest_tile_height {
+		dst_row_idx := (tile_col*dest_tile_width) + (tile_row*dest_tile_height+row)*dest_width
+		for col in 0..<dest_tile_width {
+			dst_idx := dst_row_idx + col
+			acc_idx := row*dest_tile_width + col
+
+			count := counter[acc_idx]
+			sos := sum_of_squares[acc_idx]
+			avg := 0 if count == 0 else sos/count
+
+			intensity := clamp(u32(math.round(math.sqrt(f64(avg)))), 0, 255)
+			dest_pixels[dst_idx] = (intensity << 24) | 0xffffff
+		}
+	}
 }
 
 sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
@@ -114,9 +213,7 @@ sdl_render :: proc() {
 
 	renderer := SDL.GetRenderer(WIN)
 
-	if renderer == nil {
-		panic("no renderer")
-	}
+	if renderer == nil do panic("no renderer")
 
 	output_width, output_height : i32
 	if SDL.GetRendererOutputSize(renderer, &output_width, &output_height) < 0 do panic("couldn't get renderer size")
@@ -190,38 +287,6 @@ sdl_resize_window :: proc()
 	sdl_create_textures(r, int(width), int(height))
 }
 
-SDL_KEYMAP : map[SDL.Scancode]c.KeyboardKey
-GAME_INPUT : c.GameInput
-
-setup_keymap :: proc() {
-	sdl_a := int(SDL.SCANCODE_A)
-	lib_a := int(c.KeyboardKey.A)
-	for i in 0..<26 {
-		sdl_key := SDL.Scancode(sdl_a+i)
-		lib_key := c.KeyboardKey(lib_a+i)
-		SDL_KEYMAP[sdl_key] = lib_key
-	}
-	sdl_1 := int(SDL.SCANCODE_1)
-	lib_1 := int(c.KeyboardKey.N_1)
-	for i in 0..<10 {
-		sdl_key := SDL.Scancode(sdl_1+i)
-		lib_key := c.KeyboardKey(lib_1+i)
-		SDL_KEYMAP[sdl_key] = lib_key
-	}
-
-	SDL_KEYMAP[.UP] = .UP
-	SDL_KEYMAP[.DOWN] = .DOWN
-	SDL_KEYMAP[.LEFT] = .LEFT
-	SDL_KEYMAP[.RIGHT] = .RIGHT
-
-	SDL_KEYMAP[.LCTRL] = .CTRL
-	SDL_KEYMAP[.RCTRL] = .CTRL
-	SDL_KEYMAP[.LSHIFT] = .SHIFT
-	SDL_KEYMAP[.RSHIFT] = .SHIFT
-	SDL_KEYMAP[.LALT] = .META
-	SDL_KEYMAP[.RALT] = .META
-}
-
 sdl_handle_event :: proc(event:SDL.Event) -> bool {
 	should_quit := false
 	#partial switch event.type {
@@ -261,10 +326,7 @@ sdl_handle_event :: proc(event:SDL.Event) -> bool {
  * Game API and Lib *
  ********************/
 
-LIB_NAME :: "game.dll"
-LIB_LOCK_NAME :: "lock.tmp"
-
-load_game_library :: proc(api_version:int) -> c.GameAPI {
+load_game_library :: proc(api_version:int) -> GameAPI {
 	lib_write_time, lwt_err := os.last_write_time_by_name(LIB_NAME)
 	if lwt_err != nil {
 		panic("Couldn't get last write time of file")
@@ -276,10 +338,10 @@ load_game_library :: proc(api_version:int) -> c.GameAPI {
 	lib, lib_ok := dynlib.load_library(fmt.tprintf("game_{0}.dll", api_version))
 	if !lib_ok do panic("dynload fail")
 
-	api := c.GameAPI {
-		update = cast(c.GameUpdateFn)(dynlib.symbol_address(lib, "game_update")),
-		init = cast(c.GameInitFn)(dynlib.symbol_address(lib, "game_state_init")),
-		destroy = cast(c.GameDestroyFn)(dynlib.symbol_address(lib, "game_state_destroy")),
+	api := GameAPI {
+		update = cast(common.GameUpdateFn)(dynlib.symbol_address(lib, "game_update")),
+		init = cast(common.GameInitFn)(dynlib.symbol_address(lib, "game_state_init")),
+		destroy = cast(common.GameDestroyFn)(dynlib.symbol_address(lib, "game_state_destroy")),
 		lib = lib,
 		write_time = lib_write_time,
 	}
@@ -288,15 +350,15 @@ load_game_library :: proc(api_version:int) -> c.GameAPI {
 }
 
 main :: proc() {
-	/****************
-	 * DEBUG logger *
-	 ****************/
 
 	context.logger = log.create_console_logger()
 	context.logger.lowest_level = .Warning
 	defer log.destroy_console_logger(context.logger)
 
 	when ODIN_DEBUG {
+	/****************
+	 * DEBUG logger *
+	 ****************/
 		context.logger.lowest_level = .Debug
 		track: mem.Tracking_Allocator
 		mem.tracking_allocator_init(&track, context.allocator)
@@ -325,7 +387,7 @@ main :: proc() {
 	if SDL.Init(SDL.InitFlags{.VIDEO}) < 0 do panic("Could not initialize window")
 	sdl_load_spritesheet()
 
-	init_width:i32 = 1177
+	init_width:i32  = 1177
 	init_height:i32 = 736
 	flags := SDL.WindowFlags{ .RESIZABLE, .ALLOW_HIGHDPI, }
 	WIN = SDL.CreateWindow("MY_ROGUELIKE",
@@ -349,9 +411,7 @@ main :: proc() {
 
 	api_version := 0
 	game_api := load_game_library(api_version)
-	platform_api := c.PlatformAPI{
-		plot_tile = set_tile
-	}
+	platform_api := PlatformAPI{ plot_tile = set_tile }
 	game_memory := game_api.init(platform_api)
 	lib_reload_timer := 0
 	defer game_api.destroy(game_memory)
@@ -362,36 +422,30 @@ main :: proc() {
 	 *************/
 
 	running := true
-	game_update_hz :f32= 60.0
+	game_update_hz:f32 = 60.0 // 60FPS
 	target_seconds_per_frame := 1.0 / game_update_hz
 	last_counter := SDL.GetPerformanceCounter()
 
-	for x in 0..<COLS {
-		for y in 0..<ROWS {
-			TILES[x][y].bg = {0,0,0,1}
-			TILES[x][y].fg = {1,1,1,1}
-		}
-	}
-
 	for running {
-		if lib_reload_timer > 2*60 && !os.is_file(LIB_LOCK_NAME) {
-			new_lib_write_time, err := os.last_write_time_by_name(LIB_NAME)
-			if err != nil {
-				panic("Couldn't get new write time")
+		when ODIN_DEBUG {
+			// try library reload every 120 frames
+			if lib_reload_timer > 2*60 && !os.is_file(LIB_LOCK_NAME) {
+				new_lib_write_time, err := os.last_write_time_by_name(LIB_NAME)
+				if err != nil {
+					panic("Couldn't get new write time")
+				}
+				if new_lib_write_time > game_api.write_time {
+					api_version += 1
+					log.debug("Loading API version", api_version)
+					game_api = load_game_library(api_version)
+				}
+				lib_reload_timer = 0
 			}
-			if new_lib_write_time > game_api.write_time {
-				api_version += 1
-				log.debug("Loading API version", api_version)
-				game_api = load_game_library(api_version)
-			}
-			lib_reload_timer = 0
+			lib_reload_timer += 1
 		}
-		lib_reload_timer += 1
 
 		event : SDL.Event
-		for SDL.PollEvent(&event) {
-			running = !sdl_handle_event(event)
-		}
+		for SDL.PollEvent(&event) do running = !sdl_handle_event(event)
 
 		game_api.update(target_seconds_per_frame, game_memory, GAME_INPUT)
 
@@ -404,20 +458,9 @@ main :: proc() {
 			btn.was_down = btn.is_down
 		}
 
-		pre_render := SDL.GetPerformanceCounter()
 		sdl_render()
-		when ODIN_DEBUG {
-			post_render := SDL.GetPerformanceCounter()
-			prerender_spf := sdl_get_seconds_elapsed(last_counter, pre_render)
-			actual_spf := sdl_get_seconds_elapsed(last_counter, post_render)
-			log.debugf("target s/f: %.2fms\t prerender: %.2f\t postrender : %.2f\t headroom : %.2f",
-					   target_seconds_per_frame*1000,
-					   prerender_spf*1000,
-					   actual_spf*1000,
-					   (target_seconds_per_frame-actual_spf)*1000,
-					   )
-		}
 
+		// sleep until target frame time hit.
 		if sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter()) < target_seconds_per_frame
 		{
 			time_to_sleep := u32((target_seconds_per_frame - sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter())) * 1000) - 1
@@ -429,10 +472,6 @@ main :: proc() {
 		}
 		last_counter = SDL.GetPerformanceCounter()
 	}
-
-	/**********
-	 * Render *
-	 **********/
 
 	SDL.Quit()
 }

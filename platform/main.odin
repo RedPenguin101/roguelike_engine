@@ -38,24 +38,12 @@ set_tile :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph) {
 WIN : ^SDL.Window
 
 // see create_textures proc for why we have 4 textures
-TEXTURE : [4]^SDL.Texture
+TEXTURE : ^SDL.Texture
 TEX_TILE_WIDTH :i32= PNG_TILE_WIDTH
 TEX_TILE_HEIGHT :i32= PNG_TILE_HEIGHT
 
-GLYPH_LOOKUP := [c.DisplayGlyph]int{
-		.NULL=0,
-		.N_0=48,
-		.N_1=49,
-		.N_2=50,
-		.N_3=51,
-		.N_4=52,
-		.N_5=53,
-		.N_6=54,
-		.N_7=55,
-		.N_8=56,
-		.N_9=57,
-		.AT=64,
-		.A=65, .B=66, .C=67, .D=68, .E=69, .F=70, .G=71, .H=72, .I=73, .J=74, .K=75, .L=76, .M=77, .N=78, .O=79, .P=80, .Q=81, .R=82, .S=83, .T=84, .U=85, .V=86, .W=87, .X=88, .Y=89, .Z=90
+glyph_lookup :: proc(g:c.DisplayGlyph) -> int {
+	return int(g)
 }
 
 /*****************
@@ -74,53 +62,35 @@ color_to_sdl :: proc(c:Color) -> [4]u8 {
 	return sdl_col
 }
 
-/*
-
-Textures will be sized so the sprites are the same size as the rects
-they will be rendrered to.
-
-We make four copies of the spritesheet texture. They all have the same
-characters on them, but at slightly different sizes:
-
-Where W is the native sprite width (128) and H is the native height
-(232)
-
-- 1st texture: tiles are   W   x   H   pixels
-- 2nd texture: tiles are (W+1) x   H   pixels
-- 3rd texture: tiles are   W   x (H+1) pixels
-- 4th texture: tiles are (W+1) x (H+1) pixels
-
-Since the window width is usually not a multiple of 100 (the `COLS`
-constant), and height not a multiple of 34 (`ROWS`), and tiles must
-have integer dimensions, that means some tiles must be larger by 1
-pixel than others, so that we can span the window without black
-padding on the sides nor columns/rows of blank pixels between tiles.
-
-*/
-
 sdl_create_textures :: proc(r:^SDL.Renderer, output_width, output_height: int) {
-	log.debug("resizing", output_width, output_height)
 	assert(r!=nil)
-
-	SDL.SetHint(SDL.HINT_RENDER_SCALE_QUALITY, "linear");
-	tmp_txt := SDL.CreateTextureFromSurface(r, PNG)
-
-	if TEXTURE[0] != nil do SDL.DestroyTexture(TEXTURE[0])
+	if PNG == nil {
+		return
+	}
+	target_height := output_height/ROWS
+	target_width  := output_width/COLS
 	pfmt := SDL.PixelFormatEnum.ARGB8888
-	TEXTURE[0] = SDL.CreateTexture(r, pfmt, .TARGET, i32(output_width), i32(output_height))
-	SDL.SetRenderTarget(r, TEXTURE[0])
-	SDL.RenderClear(r)
-	src := SDL.Rect{0,0,PNG_WIDTH,PNG_HEIGHT}
-	dst := SDL.Rect{0,0,i32(output_width), i32(output_height)}
-	SDL.RenderCopy(r, tmp_txt, &src, &dst)
-	SDL.SetRenderTarget(r, nil)
-	SDL.SetTextureBlendMode(TEXTURE[0], .BLEND)
-	TEX_TILE_WIDTH = i32(output_width/16)
-	TEX_TILE_HEIGHT = i32(output_height/24)
+	downscaled := SDL.CreateRGBSurfaceWithFormat(0, i32(target_width*16), i32(target_height*24), 32, u32(pfmt))
+
+	for row in 0..<24 {
+		for col in 0..<16 {
+			downscale_tile(PNG, PNG_TILE_WIDTH, PNG_TILE_HEIGHT,
+						   downscaled, target_width, target_height,
+						   row, col)
+		}
+	}
+
+	if TEXTURE != nil do SDL.DestroyTexture(TEXTURE)
+	TEXTURE = SDL.CreateTextureFromSurface(r, downscaled)
+	SDL.SetTextureBlendMode(TEXTURE, .BLEND)
+	TEX_TILE_HEIGHT = i32(target_height)
+	TEX_TILE_WIDTH  = i32(target_width)
+	SDL.FreeSurface(downscaled)
 }
 
 sdl_render :: proc() {
 	if WIN == nil  do return
+	if TEXTURE == nil do return
 
 	renderer := SDL.GetRenderer(WIN)
 
@@ -150,21 +120,21 @@ sdl_render :: proc() {
 			tile := &TILES[x][y]
 			TPR :: 16
 
-			idx := GLYPH_LOOKUP[tile.glyph]
-			src : SDL.Rect
-			src.w = TEX_TILE_WIDTH
-			src.h = TEX_TILE_HEIGHT
-			src.x = TEX_TILE_WIDTH * i32(idx%TPR)
-			src.y = TEX_TILE_HEIGHT * i32(idx/TPR)
-
 			bg := color_to_sdl(tile.bg)
 			SDL.SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a)
 			SDL.RenderFillRect(renderer, &dest)
 
-			if tile.glyph != .NULL {
+			if tile.glyph > .BLANK {
+				idx := glyph_lookup(tile.glyph)
+				src : SDL.Rect
+				src.w = TEX_TILE_WIDTH
+				src.h = TEX_TILE_HEIGHT
+				src.x = TEX_TILE_WIDTH  * i32(idx%TPR)
+				src.y = TEX_TILE_HEIGHT * i32(idx/TPR)
+
 				fg := color_to_sdl(tile.fg)
-				SDL.SetTextureColorMod(TEXTURE[0], fg.r, fg.g, fg.b)
-				SDL.RenderCopy(renderer, TEXTURE[0], &src, &dest)
+				SDL.SetTextureColorMod(TEXTURE, fg.r, fg.g, fg.b)
+				SDL.RenderCopy(renderer, TEXTURE, &src, &dest)
 			}
 		}
 	}
@@ -323,8 +293,8 @@ main :: proc() {
 	SDL.SetHint(SDL.HINT_WINDOWS_DISABLE_THREAD_NAMING, "1")
 	if SDL.Init(SDL.InitFlags{.VIDEO}) < 0 do panic("Could not initialize window")
 
-	sdl_resize_window(1177, 736)
 	sdl_load_spritesheet()
+	sdl_resize_window(1177, 736)
 
 	{
 		r := SDL.GetRenderer(WIN)

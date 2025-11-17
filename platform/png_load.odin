@@ -2,6 +2,7 @@ package platform
 
 import "vendor:sdl2/image"
 import SDL "vendor:sdl2"
+import "core:math"
 
 PNG_WIDTH :: 2048
 PNG_HEIGHT :: 5568
@@ -73,17 +74,47 @@ sdl_load_spritesheet :: proc() {
 			PNG_TILE_IS_EMPTY[x][y] = is_empty(x, y)
 		}
 	}
+}
 
-	// Convert greyscale image intensity to alpha
-	p_count := PNG.w * PNG.h
-	pixels := cast([^]u32)PNG.pixels
-	for i in 0..<p_count {
-		r,g,b,a : u8
-		SDL.GetRGBA(pixels[i], PNG.format, &r,&g,&b,&a)
-		a=r
-		r=255
-		g=255
-		b=255
-		pixels[i] = SDL.MapRGBA(PNG.format, r,g,b,a)
+downscale_tile :: proc(source:^SDL.Surface, source_tile_width, source_tile_height: int,
+					   dest:^SDL.Surface, dest_tile_width, dest_tile_height: int,
+					   tile_row, tile_col: int)
+{
+	source_pixels := cast([^]u32)source.pixels
+	dest_pixels   := cast([^]u32)dest.pixels
+
+	col_mapping := make([]int, source_tile_width, context.temp_allocator)
+	row_mapping := make([]int, source_tile_height, context.temp_allocator)
+
+	for col in 0..<source_tile_width  do col_mapping[col] = (col*dest_tile_width)/source_tile_width
+	for row in 0..<source_tile_height do row_mapping[row] = (row*dest_tile_height)/source_tile_height
+
+	counter        := make([]u64, dest_tile_width*dest_tile_height, context.temp_allocator)
+	sum_of_squares := make([]u64, dest_tile_width*dest_tile_height, context.temp_allocator)
+
+	for acc_row, src_row in row_mapping {
+		for acc_col, src_col in col_mapping {
+			src_idx := (tile_col*source_tile_width)+(tile_row*source_tile_height+src_row)*PNG_WIDTH + src_col
+			acc_idx := (acc_row*dest_tile_width)+acc_col
+
+			intensity := u64(source_pixels[src_idx] & 0xff)
+			counter[acc_idx]        += 1
+			sum_of_squares[acc_idx] += intensity*intensity
+		}
+	}
+
+	dest_width := int(dest.w)
+	for row in 0..<dest_tile_height {
+		for col in 0..<dest_tile_width {
+			dst_idx := (tile_col*dest_tile_width) + (tile_row*dest_tile_height+row)*dest_width + col
+			acc_idx := row*dest_tile_width + col
+
+			count := counter[acc_idx]
+			sos := sum_of_squares[acc_idx]
+			avg := 0 if count == 0 else sos/count
+
+			intensity := clamp(u32(math.round(math.sqrt(f64(avg)))), 0, 255)
+			dest_pixels[dst_idx] = (intensity << 24) | 0xffffff
+		}
 	}
 }

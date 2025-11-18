@@ -19,10 +19,8 @@ yellow         := Color{1, 1, 0, 1}
  * Game API functions *
  **********************/
 
-V2i :: [2]int
-
 GameState :: struct {
-	player_pos : V2i
+	player_pos : [2]int
 }
 
 GameMemory :: struct {
@@ -67,6 +65,15 @@ game_update :: proc(time_delta:f32, memory:^GameMemory, input:GameInput) -> bool
 	/****************
 	 * INPUT HANDLE *
 	 ****************/
+
+	if input.mouse.moved {
+		old := input.mouse.previous_tile
+		nw := input.mouse.tile
+		plot_tile(old.x, old.y, black, black, .BLANK)
+		plot_tile(nw.x, nw.y, black, white, .BLANK)
+	}
+
+	if released(input.mouse.lmb) do plot_tile(input.mouse.tile.x, input.mouse.tile.y, yellow, black, .SIG)
 
 	plot_tile(state.player_pos.x, state.player_pos.y, black, black, .BLANK)
 

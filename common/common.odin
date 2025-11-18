@@ -74,10 +74,12 @@ KeyboardInput :: [KeyboardKey]ButtonState
 
 MouseInput :: struct {
 	position, previous_position:[2]f32,
+	tile, previous_tile:[2]int,
 	moved : bool,
 	lmb : ButtonState,
 	rmb : ButtonState,
 	mmb : ButtonState,
+	consecutive_clicks : int,
 }
 
 GameInput :: struct {

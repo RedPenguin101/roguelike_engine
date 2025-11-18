@@ -293,6 +293,19 @@ sdl_resize_window :: proc()
 sdl_handle_event :: proc(event:SDL.Event) -> bool {
 	should_quit := false
 	#partial switch event.type {
+		case .MOUSEMOTION: {
+			GAME_INPUT.mouse.previous_position = GAME_INPUT.mouse.position
+			GAME_INPUT.mouse.position = {f32(event.motion.x), f32(event.motion.y)}
+			GAME_INPUT.mouse.moved = true
+		}
+		case .MOUSEBUTTONDOWN, .MOUSEBUTTONUP: {
+			b := event.button.button
+			if !(b==1 || b==3) do log.panicf("unrecognized mouse button %d", b)
+			m := &GAME_INPUT.mouse
+			btn := &m.lmb if b == 1 else &m.rmb
+			btn.is_down = event.button.state == SDL.PRESSED
+			m.consecutive_clicks = int(event.button.clicks)
+		}
 		case .KEYDOWN, .KEYUP: {
 			keycode := SDL.Keycode(event.key.keysym.sym)
 			mods := event.key.keysym.mod
@@ -450,16 +463,33 @@ main :: proc() {
 
 		game_api.update(target_seconds_per_frame, game_memory, GAME_INPUT)
 
-		for &btn in GAME_INPUT.keyboard {
+		output_width, output_height : i32
+		SDL.GetWindowSize(WIN, &output_width, &output_height)
+		if GAME_INPUT.mouse.moved {
+			tile_x := (int(GAME_INPUT.mouse.position.x) * COLS) / int(output_width)
+			tile_y := (int(GAME_INPUT.mouse.position.y) * ROWS) / int(output_height)
+			GAME_INPUT.mouse.previous_tile = GAME_INPUT.mouse.tile
+			GAME_INPUT.mouse.tile = {tile_x, tile_y}
+		}
+
+		button_reset :: proc(btn:^common.ButtonState, frame_time:f32) {
 			if btn.is_down && btn.was_down {
-				btn.repeat += target_seconds_per_frame
+				btn.repeat += frame_time
 			} else if !btn.is_down && btn.was_down {
 				btn.repeat = 0
 			}
 			btn.was_down = btn.is_down
 		}
 
+		for &btn in GAME_INPUT.keyboard {
+			button_reset(&btn, target_seconds_per_frame)
+		}
+		button_reset(&GAME_INPUT.mouse.lmb, target_seconds_per_frame)
+		button_reset(&GAME_INPUT.mouse.rmb, target_seconds_per_frame)
+
 		sdl_render()
+
+		GAME_INPUT.mouse.moved = false
 
 		// sleep until target frame time hit.
 		if sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter()) < target_seconds_per_frame

@@ -60,11 +60,11 @@ GAME_INPUT : GameInput
 
 glyph_lookup :: proc(g:DisplayGlyph) -> int { return int(g) }
 
-set_tile :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph) {
-	TILES[x][y].fg = fg
-	TILES[x][y].bg = bg
-	TILES[x][y].glyph = glyph
-	TILES[x][y].needs_update = true
+set_tile :: proc(v:[2]int, fg,bg:Color, glyph:DisplayGlyph) {
+	TILES[v.x][v.y].fg = fg
+	TILES[v.x][v.y].bg = bg
+	TILES[v.x][v.y].glyph = glyph
+	TILES[v.x][v.y].needs_update = true
 }
 
 setup_keymap :: proc() {
@@ -357,6 +357,7 @@ load_game_library :: proc(api_version:int) -> GameAPI {
 	api := GameAPI {
 		update = cast(common.GameUpdateFn)(dynlib.symbol_address(lib, "game_update")),
 		init = cast(common.GameInitFn)(dynlib.symbol_address(lib, "game_state_init")),
+		reinit = cast(common.GameReinitFn)(dynlib.symbol_address(lib, "reinit")),
 		destroy = cast(common.GameDestroyFn)(dynlib.symbol_address(lib, "game_state_destroy")),
 		lib = lib,
 		write_time = lib_write_time,
@@ -436,7 +437,7 @@ main :: proc() {
 	 *************/
 
 	running := true
-	game_update_hz:f32 = 60.0 // 60FPS
+	game_update_hz:f32 = 30.0 // 60FPS
 	target_seconds_per_frame := 1.0 / game_update_hz
 	last_counter := SDL.GetPerformanceCounter()
 
@@ -452,6 +453,7 @@ main :: proc() {
 					api_version += 1
 					log.debug("Loading API version", api_version)
 					game_api = load_game_library(api_version)
+					game_api.reinit(platform_api)
 				}
 				lib_reload_timer = 0
 			}
@@ -459,9 +461,9 @@ main :: proc() {
 		}
 
 		event : SDL.Event
-		for SDL.PollEvent(&event) do running = !sdl_handle_event(event)
-
-		game_api.update(target_seconds_per_frame, game_memory, GAME_INPUT)
+		for SDL.PollEvent(&event) {
+			running = !sdl_handle_event(event)
+		}
 
 		output_width, output_height : i32
 		SDL.GetWindowSize(WIN, &output_width, &output_height)
@@ -471,6 +473,8 @@ main :: proc() {
 			GAME_INPUT.mouse.previous_tile = GAME_INPUT.mouse.tile
 			GAME_INPUT.mouse.tile = {tile_x, tile_y}
 		}
+
+		game_api.update(target_seconds_per_frame, game_memory, GAME_INPUT)
 
 		button_reset :: proc(btn:^common.ButtonState, frame_time:f32) {
 			if btn.is_down && btn.was_down {
@@ -486,22 +490,27 @@ main :: proc() {
 		}
 		button_reset(&GAME_INPUT.mouse.lmb, target_seconds_per_frame)
 		button_reset(&GAME_INPUT.mouse.rmb, target_seconds_per_frame)
+		GAME_INPUT.mouse.moved = false
 
 		sdl_render()
 
-		GAME_INPUT.mouse.moved = false
-
-		// sleep until target frame time hit.
 		if sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter()) < target_seconds_per_frame
 		{
-			time_to_sleep := u32((target_seconds_per_frame - sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter())) * 1000) - 1
-			SDL.Delay(time_to_sleep)
+			pc := SDL.GetPerformanceCounter()
+			s_elapsed := sdl_get_seconds_elapsed(last_counter, pc)
+			headroom := (target_seconds_per_frame - s_elapsed) * 1000
+			time_to_sleep := int(headroom) - 2
+			time_to_sleep = max(0, time_to_sleep)
+			SDL.Delay(u32(time_to_sleep))
+
 			for (sdl_get_seconds_elapsed(last_counter, SDL.GetPerformanceCounter()) < target_seconds_per_frame)
 			{
 				// Waiting...
 			}
 		}
+
 		last_counter = SDL.GetPerformanceCounter()
+		free_all(context.temp_allocator)
 	}
 
 	SDL.Quit()

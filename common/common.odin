@@ -23,11 +23,13 @@ Color :: [4]f32
 
 GameUpdateFn :: proc(time_delta:f32, memory:rawptr, input:GameInput) -> bool
 GameInitFn   :: proc(PlatformAPI) -> rawptr
+GameReinitFn   :: proc(PlatformAPI)
 GameDestroyFn :: proc(memory:rawptr)
 
 GameAPI :: struct {
 	update: GameUpdateFn,
 	init: GameInitFn,
+	reinit: GameReinitFn,
 	destroy: GameDestroyFn,
 	lib: dynlib.Library,
 	write_time: os.File_Time,
@@ -37,7 +39,7 @@ GameAPI :: struct {
  * Platform API *
  ****************/
 
-PlatformPlotTileFn :: proc(x,y:int, fg,bg:Color, glyph:DisplayGlyph)
+PlatformPlotTileFn :: proc(v:[2]int, fg,bg:Color, glyph:DisplayGlyph)
 
 PlatformAPI :: struct {
 	plot_tile : PlatformPlotTileFn
@@ -74,6 +76,7 @@ KeyboardInput :: [KeyboardKey]ButtonState
 
 MouseInput :: struct {
 	position, previous_position:[2]f32,
+	// denoted in screen space
 	tile, previous_tile:[2]int,
 	moved : bool,
 	lmb : ButtonState,
